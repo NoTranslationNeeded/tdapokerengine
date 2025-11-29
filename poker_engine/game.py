@@ -84,12 +84,12 @@ class PokerGame:
         self.hand_history: List[str] = []
         self.current_actor = -1
         
-    def start_hand(self, chips: List[float], button: int = 0):
+    def start_hand(self, players_info: list, button: int = 0):
         """
         Start a new hand with N players
         
         Args:
-            chips: List of chip counts for each player. Length determines num_players.
+            players_info: List of chip counts (float) OR List of (id, chips) tuples
             button: Button position index
         """
         self.hand_number += 1
@@ -98,14 +98,20 @@ class PokerGame:
         self.winner = None
         self.hand_history = []
         
-        num_players = len(chips)
+        num_players = len(players_info)
         if num_players < 2:
             raise ValueError("Need at least 2 players")
             
         # Initialize players
         self.players = []
-        for i, chip_count in enumerate(chips):
-            player = Player(i, chip_count)
+        for i, info in enumerate(players_info):
+            if isinstance(info, (int, float)):
+                # Old style: just chips, auto-assign ID based on index
+                player = Player(i, float(info))
+            else:
+                # New style: (id, chips) tuple/list
+                pid, chips = info
+                player = Player(pid, float(chips))
             self.players.append(player)
             
         # Reset deck and deal hands
@@ -407,10 +413,11 @@ class PokerGame:
         4. Players all-in at lower levels are removed from higher pots
         """
         # Collect bets with player info
+        # Collect bets with player info from ALL players (including folded)
         player_bets = []
         for i, player in enumerate(self.players):
-            if not player.is_folded():
-                total_bet = player.bet_this_hand
+            total_bet = player.bet_this_hand
+            if total_bet > 0:
                 player_bets.append((i, total_bet))
         
         # Sort by bet amount (ascending)
@@ -427,11 +434,23 @@ class PokerGame:
                 pot_size = level_contribution * len(remaining_players)
                 
                 # Create pot
-                pots.append(Pot(pot_size, list(remaining_players)))
+                # Only active (non-folded) players are eligible to win
+                eligible_players = [pid for pid in remaining_players if not self.players[pid].is_folded()]
+                
+                if eligible_players:
+                    pots.append(Pot(pot_size, eligible_players))
+                else:
+                    # If no one is eligible (everyone folded?), add to previous pot or handle as dead money
+                    # In a showdown scenario, at least one person must be active.
+                    # If this happens, it means this chunk of money belongs to the last survivor.
+                    # But _calculate_pots is usually called when >1 active players.
+                    # If we have pots, add to the last one (main pot or side pot)
+                    if pots:
+                        pots[-1].amount += pot_size
                 
                 previous_level = bet_amount
             
-            # Remove this player from future pots (they're all-in)
+            # Remove this player from future pots (they're all-in or folded/capped)
             remaining_players.discard(player_id)
         
         return pots
@@ -620,8 +639,14 @@ class PokerGame:
         amount_to_call = self.current_bet - player.bet_this_round
         
         # Exception for Preflop SB (who hasn't acted on the big blind yet)
-        # In Heads-up Preflop, SB is the first to act voluntarily.
-        is_preflop_sb = (self.street == Street.PREFLOP and player_id == self.button_position)
+        # Calculate SB position correctly based on player count
+        num_players = len(self.players)
+        if num_players == 2:
+            sb_pos = self.button_position
+        else:
+            sb_pos = (self.button_position + 1) % num_players
+            
+        is_preflop_sb = (self.street == Street.PREFLOP and player_id == sb_pos)
         
         if not is_preflop_sb and 0 < amount_to_call < self.min_raise:
             # Facing a short all-in raise -> Cannot re-raise

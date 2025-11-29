@@ -61,11 +61,15 @@ def print_game_state(game: PokerGame):
         if p.is_folded():
             hand_str = "[FOLDED]"
             
-        print(f"P{i:<3} {role:<8} {p.chips:<10.1f} {p.bet_this_round:<10.1f} {status:<10} {hand_str:<20}")
+        print(f"P{p.player_id:<3} {role:<8} {p.chips:<10.1f} {p.bet_this_round:<10.1f} {status:<10} {hand_str:<20}")
         
     print("="*100)
 
 def get_user_action(game: PokerGame, player_id: int) -> Action:
+    # player_id passed here is the index in game.players list
+    # We need to get the real player ID for display
+    real_player_id = game.players[player_id].player_id
+    
     legal_actions = game.get_legal_actions(player_id)
     legal_str = ", ".join([a.value for a in legal_actions])
     
@@ -74,7 +78,7 @@ def get_user_action(game: PokerGame, player_id: int) -> Action:
     to_call = current_bet - my_bet
     min_raise = game.min_raise
     
-    print(f"\n[Player {player_id} Turn]")
+    print(f"\n[Player {real_player_id} Turn]")
     print(f"To Call: {to_call:.1f}")
     if ActionType.RAISE in legal_actions:
         print(f"Min Raise To: {current_bet + min_raise:.1f}")
@@ -82,7 +86,7 @@ def get_user_action(game: PokerGame, player_id: int) -> Action:
     while True:
         print(f"Legal: [{legal_str}]")
         try:
-            raw_input = input(f"Action (P{player_id}) > ").strip().lower()
+            raw_input = input(f"Action (P{real_player_id}) > ").strip().lower()
         except EOFError:
             sys.exit(0)
             
@@ -110,6 +114,9 @@ def get_user_action(game: PokerGame, player_id: int) -> Action:
             elif cmd in ['check', 'ch']:
                 return Action.check()
             elif cmd in ['call', 'c']:
+                # Context-sensitive 'c': Check if nothing to call, else Call
+                if to_call == 0:
+                    return Action.check()
                 return Action.call(to_call)
             elif cmd in ['bet', 'b']:
                 return Action.bet(amount)
@@ -166,24 +173,18 @@ def main():
     
     game = PokerGame(small_blind=sb_val, big_blind=bb_val)
     
-    # Initialize chips for all players
-    player_chips = [start_chips] * num_players
+    # Initialize chips for all players with IDs
+    # List of tuples: (player_id, chips)
+    active_players = [(i, start_chips) for i in range(num_players)]
     button = 0
     
     while True:
-        clear_screen()
+        # clear_screen()  <-- Removed to keep history
         print(f"\n--- NEW HAND --- (Button: P{button})")
         
-        # Remove busted players? Or keep them with 0 chips (they won't be dealt in)?
-        # Engine expects chip counts for NEW hand.
-        # If we pass 0 chips, Player class might handle it or error.
-        # Let's filter out busted players or reset them?
-        # For Admin Mode, let's keep busted players as 0 and see if engine handles it.
-        # Actually, start_hand re-initializes players list.
-        # We need to maintain chip counts between hands.
-        
         try:
-            game.start_hand(player_chips, button)
+            # Pass (id, chips) tuples to start_hand
+            game.start_hand(active_players, button)
         except ValueError as e:
             print(f"Error starting hand: {e}")
             break
@@ -193,7 +194,6 @@ def main():
             
             current_player = game.get_current_player()
             if current_player == -1:
-                # Should not happen in loop unless hand is over
                 break
                 
             action = get_user_action(game, current_player)
@@ -204,13 +204,14 @@ def main():
                 input("Press Enter to continue...")
             else:
                 print(f"\n✅ Action accepted: {action}")
-                # input("Press Enter...") 
         
         # Hand over
         print_game_state(game)
         
         if game.winner is not None:
-             print(f"\n🏆 Hand Over! Winner: Player {game.winner}")
+             # Map internal index back to player ID for display
+             winner_player = game.players[game.winner]
+             print(f"\n🏆 Hand Over! Winner: Player {winner_player.player_id}")
         else:
              print(f"\n🤝 Hand Over! Split Pot or Showdown")
              
@@ -218,16 +219,19 @@ def main():
         for line in game.get_hand_history():
             print(f"  {line}")
             
-        # Update chips for next hand
-        # game.players has the updated state
-        # We need to map back to player_chips list
-        # game.players[i] corresponds to player_chips[i] because we initialized in order
-        for i, p in enumerate(game.players):
-            player_chips[i] = p.chips
+        # Update chips for next hand and remove busted players
+        new_active_players = []
+        for p in game.players:
+            if p.chips > 0:
+                new_active_players.append((p.player_id, p.chips))
+            else:
+                print(f"\n💀 Player {p.player_id} eliminated!")
+        
+        active_players = new_active_players
+        num_players = len(active_players)
             
         # Check for busted players
-        active_count = sum(1 for c in player_chips if c > 0)
-        if active_count < 2:
+        if num_players < 2:
             print("\nGame Over! Only one player remaining.")
             break
             
@@ -235,11 +239,10 @@ def main():
             break
             
         # Move button
-        # In N-player, button moves to next active player?
-        # Simple logic: Button + 1
+        # In N-player, button moves to next active player
+        # Since we removed players, the indices shifted. 
+        # Simple rotation is fine for random/manual play.
         button = (button + 1) % num_players
-        # If button player is busted?
-        # Advanced logic needed for dead button, but for now simple rotation.
 
 if __name__ == "__main__":
     main()
