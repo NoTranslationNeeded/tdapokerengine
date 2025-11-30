@@ -5,10 +5,12 @@ Features:
 - Configurable Blinds & Starting Chips
 - Full visibility of all cards
 - Manual control for ALL players
+- Real-time raise input with cost preview
 """
 import sys
 import os
 import re
+import msvcrt
 
 # Add POKERENGINE to path if needed
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,12 +22,126 @@ from poker_engine import PokerGame, Action, ActionType
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
+def get_realtime_input(prompt: str, current_bet: float, my_bet: float, 
+                       min_raise: float, my_chips: float, to_call: float,
+                       has_raise: bool) -> str:
+    """
+    Get user input with real-time cost preview for raise/bet actions
+    Updates the Stack info line in real-time
+    
+    Args:
+        prompt: Display prompt
+        current_bet: Current bet to match
+        my_bet: Player's bet this round
+        min_raise: Minimum raise amount
+        my_chips: Player's remaining chips
+        to_call: Amount needed to call
+        has_raise: Whether RAISE action is legal
+        
+    Returns:
+        Complete input string (e.g., "r300", "call", "fold")
+    """
+    input_str = ""
+    
+    # Build the Stack info line template
+    min_raise_to = current_bet + min_raise if has_raise else 0
+    
+    def render_stack_line(cost_info: str = ""):
+        """Render the Stack info line with optional cost info"""
+        base_line = f"Stack: {my_chips:.1f}"
+        if cost_info:
+            base_line += cost_info
+        base_line += f" | To Call: {to_call:.1f}"
+        if has_raise:
+            base_line += f" | Min Raise To: {min_raise_to:.1f}"
+        return base_line
+    
+    def render_line():
+        """Render the complete input line and update Stack line above"""
+        # Calculate cost message if applicable
+        cost_info = ""
+        
+        if input_str:
+            # Try to parse command and amount from current input
+            match = re.match(r"^([a-z]+)(\d+(?:\.\d+)?)", input_str)
+            if match:
+                cmd = match.group(1)
+                try:
+                    amount = float(match.group(2))
+                    
+                    if cmd in ['r', 'raise']:
+                        # Raise: amount is "raise to" (total bet)
+                        actual_cost = amount - my_bet
+                        
+                        if amount < min_raise_to and current_bet > 0:
+                            cost_info = f' → ❌ -{actual_cost:.1f} (Min: {min_raise_to:.1f})'
+                        elif actual_cost > my_chips:
+                            cost_info = f' → ❌ -{actual_cost:.1f} (Not enough!)'
+                        elif actual_cost < 0:
+                            cost_info = f' → ❌ Invalid'
+                        else:
+                            cost_info = f' → 💵 -{actual_cost:.1f} chips'
+                    
+                    elif cmd in ['b', 'bet']:
+                        if amount > my_chips:
+                            cost_info = f' → ❌ -{amount:.1f} (Not enough!)'
+                        elif current_bet > 0:
+                            cost_info = f' → ❌ Use raise'
+                        else:
+                            cost_info = f' → 💵 -{amount:.1f} chips'
+                
+                except (ValueError, IndexError):
+                    pass
+        
+        # Update Stack line (2 lines up)
+        sys.stdout.write('\033[2A')  # Move up 2 lines
+        sys.stdout.write('\r' + render_stack_line(cost_info) + '\033[K')  # Overwrite and clear
+        sys.stdout.write('\033[2B')  # Move down 2 lines
+        
+        # Update input line
+        sys.stdout.write(f'\r{prompt}{input_str}\033[K')
+        sys.stdout.flush()
+    
+    # Initial render
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    
+    try:
+        while True:
+            if msvcrt.kbhit():
+                char = msvcrt.getch()
+                
+                # Enter key
+                if char == b'\r':
+                    print()  # New line after input
+                    return input_str
+                
+                # Backspace
+                elif char == b'\x08':
+                    if input_str:
+                        input_str = input_str[:-1]
+                        render_line()
+                
+                # ESC to cancel
+                elif char == b'\x1b':
+                    print("\n[Cancelled]")
+                    return ""
+                
+                # Printable characters
+                elif 32 <= ord(char) <= 126:
+                    char_str = char.decode()
+                    input_str += char_str
+                    render_line()
+    except KeyboardInterrupt:
+        print("\n\n[Game interrupted by user]")
+        sys.exit(0)
+
 def print_game_state(game: PokerGame):
     print("\n" + "="*100)
     print(f" STREET: {game.street.value.upper()} | POT: {game.get_pot_size():.1f} (Main: {game.pot:.1f})")
-    print(f" BOARD:  {', '.join(str(c) for c in game.community_cards) if game.community_cards else 'None'}")
+    print(f" BOARD:  {', '.join(c.pretty_str() for c in game.community_cards) if game.community_cards else 'None'}")
     print("-" * 100)
-    print(f"{'ID':<4} {'Role':<8} {'Chips':<10} {'Bet':<10} {'Status':<10} {'Hand':<20}")
+    print(f"{'ID':<4} {'Role':<8} {'Chips':<10} {'Bet':<10} {'Status':<16} {'Hand':<20}")
     print("-" * 100)
     
     current_actor = game.get_current_player()
@@ -47,21 +163,25 @@ def print_game_state(game: PokerGame):
         if i == sb_pos: role += " SB"
         if i == bb_pos: role += " BB"
         
-        # Status
-        status = p.state
+        # Status (with last action)
         if i == current_actor and not game.is_hand_over:
             status = "🔴 ACTING"
-        elif p.is_all_in():
-            status = "ALL-IN"
         elif p.is_folded():
             status = "FOLDED"
+        elif p.is_all_in():
+            # Show last action for all-in, or default
+            status = p.last_action if p.last_action else "ALL-IN"
+        elif p.last_action:
+            status = p.last_action
+        else:
+            status = "-"  # No action yet
             
         # Hand
-        hand_str = f"[{', '.join(str(c) for c in p.hand)}]" if p.hand else "[]"
+        hand_str = f"[{', '.join(c.pretty_str() for c in p.hand)}]" if p.hand else "[]"
         if p.is_folded():
             hand_str = "[FOLDED]"
             
-        print(f"P{p.player_id:<3} {role:<8} {p.chips:<10.1f} {p.bet_this_round:<10.1f} {status:<10} {hand_str:<20}")
+        print(f"P{p.player_id:<3} {role:<8} {p.chips:<10.1f} {p.bet_this_round:<10.1f} {status:<16} {hand_str:<20}")
         
     print("="*100)
 
@@ -79,14 +199,24 @@ def get_user_action(game: PokerGame, player_id: int) -> Action:
     min_raise = game.min_raise
     
     print(f"\n[Player {real_player_id} Turn]")
-    print(f"To Call: {to_call:.1f}")
+    print(f"Stack: {game.players[player_id].chips:.1f} | To Call: {to_call:.1f}", end='')
     if ActionType.RAISE in legal_actions:
-        print(f"Min Raise To: {current_bet + min_raise:.1f}")
+        print(f" | Min Raise To: {current_bet + min_raise:.1f}")
+    else:
+        print()  # New line if no raise info
     
     while True:
         print(f"Legal: [{legal_str}]")
         try:
-            raw_input = input(f"Action (P{real_player_id}) > ").strip().lower()
+            raw_input = get_realtime_input(
+                f"Action (P{real_player_id}) > ",
+                current_bet=current_bet,
+                my_bet=my_bet,
+                min_raise=min_raise,
+                my_chips=game.players[player_id].chips,
+                to_call=to_call,
+                has_raise=(ActionType.RAISE in legal_actions)
+            ).strip().lower()
         except EOFError:
             sys.exit(0)
             
@@ -245,4 +375,8 @@ def main():
         button = (button + 1) % num_players
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n[Game stopped by user - Goodbye!]")
+        sys.exit(0)

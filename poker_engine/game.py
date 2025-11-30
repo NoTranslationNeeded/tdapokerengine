@@ -144,11 +144,13 @@ class PokerGame:
         # Post SB
         sb_player = self.players[sb_pos]
         actual_sb = sb_player.post_blind(sb_amount)
+        sb_player.last_action = "Post SB"
         # self.pot += actual_sb  <-- REMOVED: Will be collected at end of round
         
         # Post BB
         bb_player = self.players[bb_pos]
         actual_bb = bb_player.post_blind(bb_amount)
+        bb_player.last_action = "Post BB"
         # self.pot += actual_bb  <-- REMOVED: Will be collected at end of round
         
         self.current_bet = bb_amount
@@ -241,6 +243,7 @@ class PokerGame:
         # Process action logic
         if action.action_type == ActionType.FOLD:
             player.fold()
+            player.last_action = "FOLDED"
             self.hand_history.append(f"P{player_id} folds")
             self._check_hand_over()
             if self.is_hand_over:
@@ -248,11 +251,13 @@ class PokerGame:
                 return (True, None)
             
         elif action.action_type == ActionType.CHECK:
+            player.last_action = "Check"
             self.hand_history.append(f"P{player_id} checks")
             
         elif action.action_type == ActionType.CALL:
             amount_to_call = self.current_bet - player.bet_this_round
             actual_amount = player.place_bet(amount_to_call)
+            player.last_action = f"Call {actual_amount:.0f}"
             self.hand_history.append(f"P{player_id} calls {actual_amount:.0f}")
             
         elif action.action_type == ActionType.BET:
@@ -260,6 +265,7 @@ class PokerGame:
             self.current_bet = player.bet_this_round
             self.last_raise_amount = action.amount
             self.min_raise = action.amount
+            player.last_action = f"Bet {actual_amount:.0f}"
             self.hand_history.append(f"P{player_id} bets {actual_amount:.0f}")
             
         elif action.action_type == ActionType.RAISE:
@@ -271,6 +277,7 @@ class PokerGame:
             self.last_raise_amount = self.current_bet - old_bet
             self.min_raise = self.last_raise_amount
             
+            player.last_action = f"Raise To {self.current_bet:.0f}"
             self.hand_history.append(f"P{player_id} raises to {self.current_bet:.0f}")
             
         elif action.action_type == ActionType.ALL_IN:
@@ -285,6 +292,7 @@ class PokerGame:
                     self.last_raise_amount = raise_amount
                     self.min_raise = raise_amount
             
+            player.last_action = f"All-in {actual_amount:.0f}"
             self.hand_history.append(f"P{player_id} all-in for {actual_amount:.0f}")
         
         # Check if betting round is over
@@ -339,19 +347,19 @@ class PokerGame:
             self.deck.deal_one()  # Burn card
             self.community_cards.extend(self.deck.deal(3))
             self.street = Street.FLOP
-            self.hand_history.append(f"Flop: {', '.join(str(c) for c in self.community_cards)}")
+            self.hand_history.append(f"Flop: {', '.join(c.pretty_str() for c in self.community_cards)}")
             
         elif self.street == Street.FLOP:
             self.deck.deal_one()  # Burn card
             self.community_cards.append(self.deck.deal_one())
             self.street = Street.TURN
-            self.hand_history.append(f"Turn: {self.community_cards[-1]}")
+            self.hand_history.append(f"Turn: {self.community_cards[-1].pretty_str()}")
             
         elif self.street == Street.TURN:
             self.deck.deal_one()  # Burn card
             self.community_cards.append(self.deck.deal_one())
             self.street = Street.RIVER
-            self.hand_history.append(f"River: {self.community_cards[-1]}")
+            self.hand_history.append(f"River: {self.community_cards[-1].pretty_str()}")
             
         elif self.street == Street.RIVER:
             self._showdown()
@@ -543,18 +551,21 @@ class PokerGame:
             for player_id, player in active_players:
                 value = HandEvaluator.evaluate(player.hand, self.community_cards)
                 hand_name = HandEvaluator.get_hand_name(player.hand, self.community_cards)
-                hand_values.append((player_id, value, hand_name))
+                best_five = HandEvaluator.get_best_five(player.hand, self.community_cards)
+                hand_values.append((player_id, value, hand_name, best_five))
             
             # Display showdown info
             self.hand_history.append(f"Showdown:")
-            for pid, val, name in hand_values:
-                self.hand_history.append(f"  P{pid}: {name}")
+            for pid, val, name, best_five in hand_values:
+                # Format: P0: Pair [♠A, ♣A, ♥K, ♦Q, ♥J]
+                best_five_str = ', '.join([c.pretty_str() for c in best_five])
+                self.hand_history.append(f"  P{pid}: {name} [{best_five_str}]")
             
             # Award each pot to the best eligible hand
             total_winnings = {}
             for pot_idx, pot in enumerate(pots):
                 # Filter hands eligible for this pot
-                eligible_hands = [(pid, val, name) for pid, val, name in hand_values 
+                eligible_hands = [(pid, val, name, best_five) for pid, val, name, best_five in hand_values 
                                  if pid in pot.eligible_players]
                 
                 if not eligible_hands:
@@ -566,7 +577,7 @@ class PokerGame:
                 best_hand_value = eligible_hands[0][1]
                 
                 # Check for ties
-                winners = [pid for pid, val, name in eligible_hands if val == best_hand_value]
+                winners = [pid for pid, val, name, best_five in eligible_hands if val == best_hand_value]
                 
                 # Split pot among winners
                 pot_share = pot.amount / len(winners)

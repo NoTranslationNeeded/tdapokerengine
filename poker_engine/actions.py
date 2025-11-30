@@ -125,20 +125,19 @@ class ActionValidator:
             if current_bet == 0:
                 return (False, "Cannot raise when no bet exists (use bet)")
             
-            # TDA Rule 43: Minimum raise = last raise amount
+            # Minimum raise = last raise amount
             # action.amount should be the TOTAL bet, not the raise increment
             total_bet = action.amount
             raise_increment = total_bet - current_bet
             
+            # Simple rule: raise increment must meet minimum
+            # No 50% rule needed for online poker (no ambiguous actions)
             if raise_increment < min_raise:
-                # TDA 50% rule: if >= 50% of min_raise, must make full raise
-                if raise_increment >= min_raise * 0.5:
-                    return (False, f"Raise must be at least {min_raise} (50% rule applies)")
-                else:
-                    return (False, f"Raise too small, treated as call")
+                return (False, f"Raise must be at least {min_raise:.0f}")
             
+            # Check if player has enough chips for this raise
             if total_bet > player_chips + player_bet_this_round:
-                return (False, "Raise exceeds chip count")
+                return (False, "Not enough chips (use all-in instead)")
             
             return (True, None)
         

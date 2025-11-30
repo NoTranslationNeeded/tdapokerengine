@@ -194,3 +194,135 @@ class HandEvaluator:
             return 5 # 5-high straight
             
         return 0
+
+    @staticmethod
+    def get_best_five(hole_cards: List[Card], community_cards: List[Card]) -> List[Card]:
+        """
+        Get the best 5 cards that form the winning hand.
+        Returns a list of 5 Card objects.
+        """
+        all_cards = hole_cards + community_cards
+        if len(all_cards) < 5:
+            return all_cards
+        
+        # Convert to (rank_value, suit_char, original_card) for processing
+        processed_cards = []
+        for card in all_cards:
+            processed_cards.append((HandEvaluator.RANK_VALUES[card.rank], card.suit, card))
+        
+        # Sort by rank descending
+        processed_cards.sort(key=lambda x: x[0], reverse=True)
+        
+        # Check Flush
+        suits = Counter([c[1] for c in processed_cards])
+        flush_suit = None
+        for suit, count in suits.items():
+            if count >= 5:
+                flush_suit = suit
+                break
+        
+        if flush_suit:
+            flush_cards = [c for c in processed_cards if c[1] == flush_suit]
+            # Check Straight Flush
+            flush_ranks = [c[0] for c in flush_cards]
+            straight_high = HandEvaluator._check_straight(flush_ranks)
+            if straight_high:
+                # Find the 5 cards forming the straight flush
+                if straight_high == 5:  # Wheel
+                    needed = {14, 5, 4, 3, 2}
+                else:
+                    needed = {straight_high, straight_high-1, straight_high-2, straight_high-3, straight_high-4}
+                result = [c[2] for c in flush_cards if c[0] in needed][:5]
+                return result
+            
+            # Regular Flush - top 5
+            return [c[2] for c in flush_cards[:5]]
+        
+        # Check Straight
+        ranks = [c[0] for c in processed_cards]
+        straight_high = HandEvaluator._check_straight(ranks)
+        if straight_high:
+            if straight_high == 5:  # Wheel
+                needed = {14, 5, 4, 3, 2}
+            else:
+                needed = {straight_high, straight_high-1, straight_high-2, straight_high-3, straight_high-4}
+            result = []
+            for rank in sorted(needed, reverse=True):
+                for c in processed_cards:
+                    if c[0] == rank and c[2] not in result:
+                        result.append(c[2])
+                        break
+            return result[:5]
+        
+        # Check Pairs/Trips/Quads
+        rank_counts = Counter(ranks)
+        sorted_counts = sorted(rank_counts.items(), key=lambda x: (x[1], x[0]), reverse=True)
+        
+        result = []
+        
+        # Four of a Kind
+        if sorted_counts[0][1] == 4:
+            # Add all 4
+            for c in processed_cards:
+                if c[0] == sorted_counts[0][0]:
+                    result.append(c[2])
+            # Add best kicker
+            for c in processed_cards:
+                if c[2] not in result:
+                    result.append(c[2])
+                    break
+            return result
+        
+        # Full House
+        if sorted_counts[0][1] == 3 and len(sorted_counts) > 1 and sorted_counts[1][1] >= 2:
+            # Add trips
+            for c in processed_cards:
+                if c[0] == sorted_counts[0][0]:
+                    result.append(c[2])
+            # Add pair
+            count = 0
+            for c in processed_cards:
+                if c[0] == sorted_counts[1][0] and count < 2:
+                    result.append(c[2])
+                    count += 1
+            return result
+        
+        # Three of a Kind
+        if sorted_counts[0][1] == 3:
+            # Add trips
+            for c in processed_cards:
+                if c[0] == sorted_counts[0][0]:
+                    result.append(c[2])
+            # Add 2 best kickers
+            for c in processed_cards:
+                if c[2] not in result and len(result) < 5:
+                    result.append(c[2])
+            return result
+        
+        # Two Pair
+        if sorted_counts[0][1] == 2 and len(sorted_counts) > 1 and sorted_counts[1][1] == 2:
+            # Add both pairs
+            for c in processed_cards:
+                if c[0] in [sorted_counts[0][0], sorted_counts[1][0]]:
+                    result.append(c[2])
+            # Add best kicker
+            for c in processed_cards:
+                if c[2] not in result:
+                    result.append(c[2])
+                    break
+            return result
+        
+        # Pair
+        if sorted_counts[0][1] == 2:
+            # Add pair
+            for c in processed_cards:
+                if c[0] == sorted_counts[0][0]:
+                    result.append(c[2])
+            # Add 3 best kickers
+            for c in processed_cards:
+                if c[2] not in result and len(result) < 5:
+                    result.append(c[2])
+            return result
+        
+        # High Card - top 5
+        return [c[2] for c in processed_cards[:5]]

@@ -34,6 +34,9 @@ class Player:
         self.bet_this_round = 0.0  # Amount bet in current betting round
         self.bet_this_hand = 0.0   # Total amount bet in current hand
         
+        # Action tracking
+        self.last_action: Optional[str] = None  # Last action taken this round
+        
     def deal_hand(self, cards: List[Card]):
         """Deal hole cards to player"""
         self.hand = cards
@@ -44,10 +47,12 @@ class Player:
         self.state = PlayerState.ACTIVE
         self.bet_this_round = 0.0
         self.bet_this_hand = 0.0
+        self.last_action = None
     
     def reset_for_new_round(self):
         """Reset bet for new betting round (flop, turn, river)"""
         self.bet_this_round = 0.0
+        self.last_action = None
     
     def place_bet(self, amount: float) -> float:
         """
