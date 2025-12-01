@@ -42,8 +42,13 @@ class Card:
         """String representation (RLCard compatible format: SA, H5, etc.)"""
         return f"{self.suit}{self.rank}"
     
-    def pretty_str(self) -> str:
-        """Pretty string with Unicode suit symbols for display"""
+    def pretty_str(self, color: bool = False) -> str:
+        """
+        Pretty string with Unicode suit symbols for display
+        
+        Args:
+            color: If True, add ANSI color codes
+        """
         # Unicode suit symbols
         suit_symbols = {
             'S': '♠',  # Spades
@@ -51,7 +56,24 @@ class Card:
             'D': '♦',  # Diamonds
             'C': '♣'   # Clubs
         }
-        return f"{suit_symbols[self.suit]}{self.rank}"
+        
+        s = f"{suit_symbols[self.suit]}{self.rank}"
+        
+        if color:
+            # ANSI Color codes
+            RED = "\033[91m"
+            BLUE = "\033[94m"
+            GREEN = "\033[92m"
+            RESET = "\033[0m"
+            
+            if self.suit in ['H', 'D']:
+                return f"{RED}{s}{RESET}"
+            elif self.suit == 'S':
+                return f"{BLUE}{s}{RESET}"
+            else:
+                return f"{GREEN}{s}{RESET}"
+                
+        return s
     
     def __repr__(self) -> str:
         return f"Card('{self.suit}{self.rank}')"
